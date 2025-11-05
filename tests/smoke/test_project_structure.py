@@ -24,6 +24,7 @@ STRUCTURE_SPEC: tuple[tuple[str, str], ...] = (
     ("src/query", "src.query"),
     ("src/lineage", "src.lineage"),
     ("src/telemetry", "src.telemetry"),
+    ("src/storage", "src.storage"),
 )
 
 TEST_DIRECTORIES: tuple[str, ...] = (
