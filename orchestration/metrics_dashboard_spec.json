@@ -1,0 +1,59 @@
+{
+  "version": "1.0.0",
+  "datasources": {
+    "traces": "otel_traces",
+    "metrics": "otel_metrics",
+    "logs": "otel_logs"
+  },
+  "panels": [
+    {
+      "title": "Latency p95 by Operation",
+      "query": "latency_p95{op=~\"authenticate|authorize|commit|search|lineage\"}"
+    },
+    {
+      "title": "Throughput R/W",
+      "query": "requests_per_sec{op=~\"write|read|search\"}"
+    },
+    {
+      "title": "Policy Eval p95 & Deny Rate",
+      "query": "policy_eval_p95, deny_rate"
+    },
+    {
+      "title": "Commit Success & Compensation Rate",
+      "query": "commit_success_rate, compensation_rate"
+    },
+    {
+      "title": "Cache Hit Rate (Indexes)",
+      "query": "cache_hit_rate"
+    },
+    {
+      "title": "Mean Time to Audit",
+      "query": "mt_to_audit_minutes"
+    },
+    {
+      "title": "Four Keys",
+      "query": "dora{metric=~\"deployment_frequency|lead_time|change_failure|mttr\"}"
+    },
+    {
+      "title": "Resource Saturation & Queues",
+      "query": "cpu_pct, mem_pct, queue_depth"
+    }
+  ],
+  "alerts": [
+    {
+      "name": "Write p95 > 40ms (10m)",
+      "expr": "latency_p95{op=\"commit\"}>0.04",
+      "for": "10m"
+    },
+    {
+      "name": "Authorize p95 > 5ms (5m)",
+      "expr": "policy_eval_p95>0.005",
+      "for": "5m"
+    },
+    {
+      "name": "DLQ growth",
+      "expr": "rate(dlq_messages[5m])>10",
+      "for": "5m"
+    }
+  ]
+}

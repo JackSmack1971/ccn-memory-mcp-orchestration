@@ -1,0 +1,492 @@
+{
+  "version": "1.0.0",
+  "flow": "ccn-memory-mcp-mvp",
+  "steps": [
+    {
+      "id": "step.authenticate",
+      "purpose": "Validate OAuth 2.1 JWT and extract actor/roles",
+      "inputs_schema": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "token"
+        ]
+      },
+      "outputs_schema": {
+        "type": "object",
+        "properties": {
+          "actor": {
+            "type": "string"
+          },
+          "claims": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "actor"
+        ]
+      },
+      "idempotency": {
+        "key": "token+jti",
+        "scope": "service",
+        "expiry": "PT15M"
+      },
+      "side_effects": [],
+      "compensation": {
+        "action": "noop",
+        "preconditions": [
+          "no_side_effects"
+        ],
+        "idempotent": true
+      },
+      "timeouts": {
+        "start": "PT1S",
+        "run": "PT2S"
+      },
+      "retries": {
+        "policy": "exponential-jitter",
+        "max_attempts": 2,
+        "base": "PT200MS"
+      },
+      "bulkheads": {
+        "concurrency": 512,
+        "queue_limit": 2048
+      },
+      "observability": {
+        "emit": [
+          "start",
+          "stop",
+          "retry",
+          "error"
+        ],
+        "digest_fields": [
+          "token_len"
+        ]
+      }
+    },
+    {
+      "id": "step.authorize",
+      "purpose": "OPA/Rego decision deny-by-default",
+      "inputs_schema": {
+        "type": "object",
+        "properties": {
+          "actor": {
+            "type": "string"
+          },
+          "action": {
+            "enum": [
+              "READ",
+              "WRITE",
+              "DELETE",
+              "SEARCH"
+            ]
+          },
+          "resource": {
+            "type": "string"
+          },
+          "context": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "actor",
+          "action"
+        ]
+      },
+      "outputs_schema": {
+        "type": "object",
+        "properties": {
+          "allow": {
+            "type": "boolean"
+          },
+          "policy_version": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "allow"
+        ]
+      },
+      "idempotency": {
+        "key": "sha256(actor|action|resource|context)",
+        "scope": "service",
+        "expiry": "PT5M"
+      },
+      "side_effects": [],
+      "compensation": {
+        "action": "noop",
+        "preconditions": [
+          "no_side_effects"
+        ],
+        "idempotent": true
+      },
+      "timeouts": {
+        "start": "PT200MS",
+        "run": "PT5MS"
+      },
+      "retries": {
+        "policy": "exponential-jitter",
+        "max_attempts": 1,
+        "base": "PT2MS"
+      },
+      "bulkheads": {
+        "concurrency": 2000,
+        "queue_limit": 5000
+      },
+      "observability": {
+        "emit": [
+          "start",
+          "stop",
+          "io_digest",
+          "error"
+        ],
+        "digest_fields": [
+          "policy_version",
+          "duration_ms"
+        ]
+      }
+    },
+    {
+      "id": "step.validate_schema",
+      "purpose": "Enforce JSON Schema 2020-12 on tool inputs",
+      "inputs_schema": {
+        "type": "object",
+        "properties": {
+          "payload": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "payload"
+        ]
+      },
+      "outputs_schema": {
+        "type": "object",
+        "properties": {
+          "valid": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "valid"
+        ]
+      },
+      "idempotency": {
+        "key": "sha256(payload)",
+        "scope": "service",
+        "expiry": "PT1H"
+      },
+      "side_effects": [],
+      "compensation": {
+        "action": "noop",
+        "preconditions": [
+          "no_side_effects"
+        ],
+        "idempotent": true
+      },
+      "timeouts": {
+        "start": "PT200MS",
+        "run": "PT10MS"
+      },
+      "retries": {
+        "policy": "exponential-jitter",
+        "max_attempts": 0,
+        "base": "PT0S"
+      },
+      "bulkheads": {
+        "concurrency": 4000,
+        "queue_limit": 8000
+      },
+      "observability": {
+        "emit": [
+          "start",
+          "stop",
+          "error"
+        ],
+        "digest_fields": [
+          "errs_count"
+        ]
+      }
+    },
+    {
+      "id": "step.deterministic_commit",
+      "purpose": "JCS canonicalize, SHA-256 commit_id, Lamport, WAL append, Merkle prev link, index update",
+      "inputs_schema": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string"
+          },
+          "payload": {
+            "type": "object"
+          },
+          "nonce": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation",
+          "payload"
+        ]
+      },
+      "outputs_schema": {
+        "type": "object",
+        "properties": {
+          "commit_id": {
+            "type": "string"
+          },
+          "lamport": {
+            "type": "integer"
+          },
+          "timestamp": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "commit_id",
+          "lamport",
+          "timestamp"
+        ]
+      },
+      "idempotency": {
+        "key": "nonce||sha256(JCS(payload)|operation)",
+        "scope": "flow",
+        "expiry": "P7D"
+      },
+      "side_effects": [
+        "file_put",
+        "db_write"
+      ],
+      "compensation": {
+        "action": "index_rebuild_from_wal",
+        "preconditions": [
+          "wal_append_exists"
+        ],
+        "idempotent": true
+      },
+      "timeouts": {
+        "start": "PT500MS",
+        "run": "PT40MS"
+      },
+      "retries": {
+        "policy": "exponential-jitter",
+        "max_attempts": 3,
+        "base": "PT50MS"
+      },
+      "bulkheads": {
+        "concurrency": 512,
+        "queue_limit": 2000
+      },
+      "observability": {
+        "emit": [
+          "start",
+          "stop",
+          "io_digest",
+          "retry",
+          "compensation",
+          "error"
+        ],
+        "digest_fields": [
+          "bytes",
+          "hash",
+          "lamport"
+        ]
+      }
+    },
+    {
+      "id": "step.indexed_query",
+      "purpose": "Serve search/read via in-memory indexes; delegate when heavy",
+      "inputs_schema": {
+        "type": "object",
+        "properties": {
+          "filters": {
+            "type": "object"
+          },
+          "traversal": {
+            "type": "object"
+          },
+          "limit": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "filters"
+        ]
+      },
+      "outputs_schema": {
+        "type": "object",
+        "properties": {
+          "entities": {
+            "type": "array"
+          },
+          "paths": {
+            "type": "array"
+          },
+          "delegated_to": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "query_latency_ms": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "query_latency_ms"
+        ]
+      },
+      "idempotency": {
+        "key": "sha256(filters|traversal|limit)",
+        "scope": "service",
+        "expiry": "PT2M"
+      },
+      "side_effects": [
+        "api_call"
+      ],
+      "compensation": {
+        "action": "cancel_external_query",
+        "preconditions": [
+          "delegated_to_exists"
+        ],
+        "idempotent": true
+      },
+      "timeouts": {
+        "start": "PT200MS",
+        "run": "PT25MS"
+      },
+      "retries": {
+        "policy": "exponential-jitter",
+        "max_attempts": 1,
+        "base": "PT10MS"
+      },
+      "bulkheads": {
+        "concurrency": 3000,
+        "queue_limit": 6000
+      },
+      "observability": {
+        "emit": [
+          "start",
+          "stop",
+          "io_digest",
+          "retry",
+          "error"
+        ],
+        "digest_fields": [
+          "cache_hit",
+          "index_used"
+        ]
+      }
+    },
+    {
+      "id": "step.lineage_export",
+      "purpose": "Assemble entity commit history and export JSON/OpenLineage",
+      "inputs_schema": {
+        "type": "object",
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          },
+          "depth": {
+            "enum": [
+              "full",
+              "direct",
+              "summary"
+            ]
+          },
+          "format": {
+            "enum": [
+              "json",
+              "openlineage_v1",
+              "csv"
+            ]
+          }
+        },
+        "required": [
+          "entity_id"
+        ]
+      },
+      "outputs_schema": {
+        "type": "object",
+        "properties": {
+          "lineage": {
+            "type": "array"
+          },
+          "export_format": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "export_format"
+        ]
+      },
+      "idempotency": {
+        "key": "sha256(entity_id|depth|format|offset)",
+        "scope": "service",
+        "expiry": "PT30M"
+      },
+      "side_effects": [],
+      "compensation": {
+        "action": "noop",
+        "preconditions": [
+          "no_side_effects"
+        ],
+        "idempotent": true
+      },
+      "timeouts": {
+        "start": "PT500MS",
+        "run": "PT50MS"
+      },
+      "retries": {
+        "policy": "exponential-jitter",
+        "max_attempts": 2,
+        "base": "PT20MS"
+      },
+      "bulkheads": {
+        "concurrency": 256,
+        "queue_limit": 1024
+      },
+      "observability": {
+        "emit": [
+          "start",
+          "stop",
+          "io_digest",
+          "error"
+        ],
+        "digest_fields": [
+          "count",
+          "duration_ms"
+        ]
+      }
+    }
+  ],
+  "contracts": {
+    "apis": [
+      {
+        "name": "mcp.tools",
+        "method": "POST",
+        "idempotency_header": "Idempotency-Key",
+        "correlation_header": "X-Correlation-Id",
+        "sla": {
+          "p95_latency_ms": 40,
+          "availability_pct": 99.9
+        }
+      }
+    ],
+    "events": [
+      {
+        "type": "ccn.memory.commit.appended",
+        "schema_ref": "$schemas/commit.json",
+        "ordering": "keyed",
+        "dedupe": "commit_id"
+      }
+    ]
+  }
+}
